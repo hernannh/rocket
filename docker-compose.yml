@@ -1,0 +1,15 @@
+# Rocket — Blue Team Log Analysis Toolkit
+# https://rocket.sockets.ar
+# https://github.com/hernannh/rocket
+
+services:
+  rocket:
+    image: bl4ckj4ck/rocket:latest
+    container_name: rocket
+    volumes:
+      - ./logs:/logs
+      - ./output:/output
+      - ./geodb:/geodb
+      - ./rules:/rules
+    working_dir: /logs
+    entrypoint: ["rocket"]
