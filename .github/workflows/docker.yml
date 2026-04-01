@@ -1,0 +1,35 @@
+name: Publicar imagen Docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Descargar binario Linux amd64
+        run: |
+          mkdir -p bin
+          wget -q -O bin/rocket-linux-amd64 "https://github.com/hernannh/rocket/releases/download/${{ github.event.release.tag_name || 'v1.0.0' }}/rocket-linux-amd64"
+          chmod +x bin/rocket-linux-amd64
+
+      - name: Build y push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            bl4ckj4ck/rocket:latest
+            bl4ckj4ck/rocket:${{ github.event.release.tag_name || 'v1.0.0' }}
