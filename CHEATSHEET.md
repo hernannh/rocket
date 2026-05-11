@@ -162,6 +162,14 @@ rocket stats /var/log/syslog --format syslog --fields program --top 20
 
 # Recursive directory
 rocket stats /var/log/ -r --fields hostname,program
+
+# Drill-down with --where (v1.1.0+) — repeatable, AND semantics
+rocket stats access.log --where 'CLIENT-IP=8.8.8.8' --fields HOST,REQ,STATUS,UA
+
+# Only 5xx responses, excluding bots
+rocket stats access.log --where 'STATUS~5' --where 'UA!~bot' --top 20
+
+# Operators: =  !=  ~ (contains)  !~ (not contains) — values case-insensitive
 ```
 
 ---
@@ -190,6 +198,8 @@ cat syslog | rocket ioc - -f syslog --types ipv4
 
 **IOC types:** `ipv4`, `ipv6`, `domain`, `url`, `email`, `md5`, `sha1`, `sha256`
 
+**v1.1.0 FP reduction:** numeric URL paths no longer produce phantom IPs; file extensions (`.html`, `.php`, `.png`...) skipped as domains; retina filenames (`logo@2x.png`) skipped as emails; pure-decimal session IDs no longer flagged as hashes.
+
 ---
 
 ## timeline — Unified Timeline
@@ -206,9 +216,13 @@ rocket timeline Security.evtx auth.log --filter "failed"
 
 # Select fields
 rocket timeline Security.evtx syslog --fields timeline_ts,source,message
+
+# Custom timestamp field (v1.1.0+) — for keyvalue / nginx access logs
+rocket timeline access.log --ts-field TIME --ts-format "[02/Jan/2006:15:04:05 -0700]"
 ```
 
 Each event gets `timeline_ts` (normalized timestamp) and `source` (origin file).
+If many events lack a parsable timestamp, Rocket prints a warning and suggests `--ts-field` / `--ts-format`.
 
 ---
 
@@ -240,6 +254,29 @@ detection:
         event_id: '4624'
         Event.EventData.LogonType: '10'
     condition: selection
+```
+
+**Modifiers (v1.1.0+):**
+
+| Modifier | Purpose | Example |
+|---|---|---|
+| `\|contains` | Substring match | `REQ\|contains: /admin` |
+| `\|startswith` | Prefix match | `REQ\|startswith: GET` |
+| `\|endswith` | Suffix match | `URL\|endswith: .php` |
+| `\|re` | Regex match (fixed in v1.1.0) | `REQ\|re: '\.\.[/\\]\|%2e%2e'` |
+| `\|cidr` | IPv4/IPv6 CIDR | `CLIENT-IP\|cidr: 10.0.0.0/8` |
+| `\|all` | Chain — require ALL listed values | `UA\|contains\|all: [curl, powershell]` |
+
+**Example using `|cidr` + `|re` (v1.1.0+):**
+
+```yaml
+title: Suspicious request from cloud range
+detection:
+    sel_ip:
+        CLIENT-IP|cidr: '20.0.0.0/8'
+    sel_path:
+        REQ|re: '(?i)\.\.[/\\]|%2e%2e|/admin/'
+    condition: sel_ip and sel_path
 ```
 
 Download community rules: `git clone https://github.com/SigmaHQ/sigma.git`
