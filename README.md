@@ -3,7 +3,7 @@
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue?style=flat)](https://github.com/hernannh/rocket/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat)](LICENSE)
-[![Static Binary](https://img.shields.io/badge/Binary-Static%20%7C%204.5MB-green?style=flat)](https://github.com/hernannh/rocket/releases)
+[![Static Binary](https://img.shields.io/badge/Binary-Static%20%7C%205MB-green?style=flat)](https://github.com/hernannh/rocket/releases)
 [![Log Formats](https://img.shields.io/badge/Log%20Formats-11-00d4ff?style=flat)](#supported-log-formats)
 [![Sigma Rules](https://img.shields.io/badge/Sigma-Rules%20Engine-blueviolet?style=flat)](#sigma)
 [![GeoIP](https://img.shields.io/badge/GeoIP-MaxMind%20GeoLite2-orange?style=flat)](#geoip)
@@ -31,7 +31,7 @@ Rocket was built for SOC analysts, incident responders, and forensic investigato
 ## Why Rocket?
 
 - **CSV & JSON export** — Convert any log format to structured CSV (Excel, databases) or JSON Lines (jq, Splunk, Elasticsearch). Select specific fields with `--fields` to reduce noise. The core value of Rocket.
-- **Single static binary** (4.5 MB) — Copy it to any machine via SCP and run. No Python, no Java, no runtime. Works on forensic workstations, compromised servers, air-gapped systems.
+- **Single static binary** (~5 MB) — Copy it to any machine via SCP and run. No Python, no Java, no runtime. Works on forensic workstations, compromised servers, air-gapped systems.
 - **11 log formats** with auto-detection — keyvalue, json, syslog, cef, leef, apache, w3c, nginx-error, bind9, android, and Windows EVTX (native binary parsing). Reads `.gz` compressed files transparently.
 - **Advanced filtering** — Text search, exclusion, regex, date ranges, deduplication. Pipe from stdin, output to stdout. Combine filters freely.
 - **Streaming I/O** — Handles multi-GB log files without loading them into memory. 500K+ records/second on syslog. Concurrent processing with configurable workers.
@@ -62,6 +62,29 @@ Rocket was built for SOC analysts, incident responders, and forensic investigato
 - [GeoIP Database Setup](#geoip-database-setup)
 - [Sigma Rules](#sigma-rules)
 - [Platform Support](#platform-support)
+
+---
+
+## What's new in v1.1.0
+
+Focused on triage ergonomics and false-positive reduction surfaced by real incident analysis.
+
+**New features**
+
+- `stats --where FIELD[=|!=|~|!~]VALUE` — per-record filter, repeatable, AND semantics. Drill down without piping to `grep` first.
+- `timeline --ts-field` / `--ts-format` — point the timeline at a custom timestamp field with a custom Go layout. Useful for keyvalue / nginx access logs.
+- Sigma `|cidr` modifier — IPv4 and IPv6 CIDR matching, e.g. `CLIENT-IP|cidr: 10.0.0.0/8`.
+- Sigma `|all` chained modifier — combine with `contains`, `startswith`, `endswith` to require all listed values to match.
+- Timeline now warns when events have unparsable timestamps (instead of silently filling `0001-01-01`) and hints at the right flag.
+- Bracketed nginx access-log timestamps (`[02/Jan/2026:15:04:05 -0700]`) and Go-style slash timestamps (`2026/04/22 00:01:24`) are auto-detected.
+
+**Bug fixes**
+
+- Sigma `|re` (regex) modifier now actually executes a regex. Previously it silently degraded to a `contains` match.
+- IOC IPv4 extractor no longer produces phantom IPs from numeric URL paths (e.g. DSpace handles like `/20.500.12123/7348`).
+- IOC domain extractor filters ~90 file extensions (`bot.html`, `matomo.php`, `logo.png`, etc.) that were being reported as FQDNs.
+- IOC email extractor skips retina image filenames (`logo@2x.png`, `sprite@3x.webp`).
+- IOC hash extractor requires at least one hex letter, filtering out 32/40/64-digit decimal session IDs incorrectly reported as MD5/SHA1/SHA256.
 
 ---
 
@@ -254,6 +277,7 @@ rocket stats <input> [flags]
 | `--format` | `-f` | Log format (default: auto) |
 | `--fields` | | Comma-separated fields to analyze (default: all) |
 | `--top` | | Number of top values per field (default: 10) |
+| `--where` | | Per-value filter (repeatable, AND). Operators: `FIELD=VAL`, `FIELD!=VAL`, `FIELD~SUBSTR`, `FIELD!~SUBSTR` *(new in v1.1.0)* |
 | `--recursive` | `-r` | Scan subdirectories |
 
 **Examples:**
@@ -267,6 +291,12 @@ rocket stats firewall.log --fields srcip,attack,severity,srccountry --top 15
 
 # Windows Event Log triage
 rocket stats Security.evtx --fields event_id,Event.EventData.TargetUserName,Event.EventData.LogonType
+
+# Drill down on a single client IP (new in v1.1.0)
+rocket stats access.log --where 'CLIENT-IP=8.8.8.8' --fields HOST,REQ,STATUS,UA
+
+# Only 5xx responses, exclude bots (new in v1.1.0)
+rocket stats access.log --where 'STATUS~5' --where 'UA!~bot' --top 20
 
 # DNS query analysis
 rocket stats query.log --fields domain,record_type,client_ip --top 20
@@ -322,6 +352,13 @@ rocket ioc <input> [flags]
 
 Private/reserved IP ranges (10.x, 172.16.x, 192.168.x, 127.x) are automatically excluded.
 
+**False-positive reduction (improved in v1.1.0):**
+
+- IPv4 matches surrounded by digits or dots are rejected (numeric URL paths like `/20.500.12123/7348` no longer produce phantom IPs).
+- Domain names that look like file extensions (`bot.html`, `matomo.php`, `logo.png`, ~90 common extensions) are filtered out.
+- Retina image filenames (`logo@2x.png`, `sprite@3x.webp`) are no longer reported as email addresses.
+- Hash patterns now require at least one hex letter (`a`-`f`), filtering out 32/40/64-digit decimal session IDs that previously masqueraded as MD5/SHA1/SHA256.
+
 **Flags:**
 
 | Flag | Short | Description |
@@ -375,7 +412,11 @@ Each event is enriched with:
 | `--fields` | | Comma-separated fields to include |
 | `--filter` | | Keep only lines containing this text |
 | `--exclude` | | Exclude lines containing this text |
+| `--ts-field` | | Field name to use as timestamp (e.g., `TIME`). Overrides auto-detection. *(new in v1.1.0)* |
+| `--ts-format` | | Go time layout for `--ts-field` (e.g., `"[02/Jan/2006:15:04:05 -0700]"`). *(new in v1.1.0)* |
 | `--recursive` | `-r` | Scan subdirectories |
+
+When some events have no parsable timestamp, Rocket now prints a warning with the count and percentage and suggests `--ts-field` / `--ts-format` when applicable, instead of silently filling `timeline_ts` with `0001-01-01`.
 
 **Examples:**
 
@@ -388,6 +429,9 @@ rocket timeline /evidence/ -r --output-format json -o timeline.json
 
 # Filtered timeline
 rocket timeline Security.evtx auth.log --filter "failed" --fields timeline_ts,source,message
+
+# Custom timestamp field for keyvalue / nginx access logs (new in v1.1.0)
+rocket timeline access.log --ts-field TIME --ts-format "[02/Jan/2006:15:04:05 -0700]"
 ```
 
 ---
@@ -416,12 +460,17 @@ rocket sigma <input> [flags]
 |---|---|
 | Field matching (exact) | Yes |
 | Field modifiers: `contains`, `startswith`, `endswith` | Yes |
+| Field modifier: `re` (regex) | Yes *(fixed in v1.1.0 — previously silently fell through to `contains`)* |
+| Field modifier: `cidr` (IPv4 + IPv6) | Yes *(new in v1.1.0)* |
+| Chained modifier: `\|all` — require all listed values to match | Yes *(new in v1.1.0)* |
 | Wildcard matching (`*`) | Yes |
 | Conditions: `and`, `or`, `not` | Yes |
 | Conditions: `1 of them`, `all of them` | Yes |
 | Conditions: `1 of selection_*`, `all of selection_*` | Yes |
 | Keyword lists (match all fields) | Yes |
 | Parentheses in conditions | Yes |
+| Field names with dashes (`CLIENT-IP`) | Yes |
+| Aggregations (`count() by ... > N`) | No (planned) |
 
 **Examples:**
 
@@ -472,6 +521,24 @@ detection:
         event_id: '4624'
         Event.EventData.LogonType: '10'
     condition: selection
+```
+
+**Example using `|cidr` and `|re` (new in v1.1.0):**
+
+```yaml
+title: Suspicious request from cloud provider range
+id: e1f2c3a4-b5d6-7890-1234-abcdef123456
+status: experimental
+level: medium
+description: Flags admin/path-traversal requests originating from a cloud CIDR
+logsource:
+    product: nginx
+detection:
+    sel_ip:
+        CLIENT-IP|cidr: '20.0.0.0/8'
+    sel_path:
+        REQ|re: '(?i)\.\.[/\\]|%2e%2e|/admin/'
+    condition: sel_ip and sel_path
 ```
 
 You can use rules from the [SigmaHQ](https://github.com/SigmaHQ/sigma) community repository.
@@ -639,10 +706,10 @@ rocket version
 ```
 
 ```
-rocket v1.0.0
+rocket v1.1.0
   commit:  a1b2c3d
-  built:   2026-03-31T00:00:00Z
-  go:      go1.22.0
+  built:   2026-05-11T00:00:00Z
+  go:      go1.24.2
   os/arch: linux/amd64
 ```
 
