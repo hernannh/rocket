@@ -706,10 +706,10 @@ rocket version
 ```
 
 ```
-rocket v1.1.0
+rocket v1.1.1
   commit:  a1b2c3d
-  built:   2026-05-11T00:00:00Z
-  go:      go1.24.2
+  built:   2026-06-27T00:00:00Z
+  go:      go1.25.0
   os/arch: linux/amd64
 ```
 
